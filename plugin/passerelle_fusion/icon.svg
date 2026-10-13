@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <title>Passerelle Fusion KiCad : échanges dans les deux sens</title>
-  <path d="M4 10H27M21 4L27 10L21 16" fill="none" stroke="#1674bd" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M28 23H5M11 17L5 23L11 29" fill="none" stroke="#e07818" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>

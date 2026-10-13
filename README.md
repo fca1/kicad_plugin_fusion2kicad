@@ -95,3 +95,5 @@ Le clone fournit l'historique du commit exporté. La version est embarquée dans
 le paquet : Git n'est pas requis dans KiCad. Les compteurs sont propres à
 l'historique de chaque dépôt ; deux historiques distincts peuvent donc donner
 des numéros différents pour un même code.
+
+Le bouton utilise le logo **F blanc sur orange / Ki blanc sur bleu**, reliés par des flèches. Le visuel source est conservé dans `plugin/passerelle_fusion/logo-source.png`, avec son icône transparente 32 pixels dans `icon.png`.
