@@ -80,3 +80,18 @@ exports de diagnostic et historiques de travail ne sont pas inclus.
 ## Licence
 
 [MIT](LICENSE).
+
+## Version affichée
+
+Le titre affiche `Passerelle Fusion ↔ KiCad — r<numéro> · <hash>`.
+Le numéro compte les commits accessibles depuis le commit source ; le hash
+identifie la révision exacte. Chaque assemblage depuis un nouveau commit prend
+sa nouvelle version ; une installation existante conserve sa version jusqu'à
+mise à jour. Les modifications locales du code ajoutent la mention `modifié`.
+
+Assembler depuis un clone Git : `python tools/build_plugin.py <dossier_neuf>`.
+Pour une archive Git : `python tools/build_plugin.py <dossier_neuf> --version-repo <clone_source>`.
+Le clone fournit l'historique du commit exporté. La version est embarquée dans
+le paquet : Git n'est pas requis dans KiCad. Les compteurs sont propres à
+l'historique de chaque dépôt ; deux historiques distincts peuvent donc donner
+des numéros différents pour un même code.

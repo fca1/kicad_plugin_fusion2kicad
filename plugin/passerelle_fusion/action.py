@@ -9,6 +9,7 @@ import wx
 from .service import run, run_command
 from .workflow import open_board
 from .import_board import find_cli
+from .version import display_version
 
 
 PREPARE_KRT = 0
@@ -17,7 +18,7 @@ PREPARE_RETURN = 1
 
 class BridgeDialog(wx.Dialog):
     def __init__(self, parent):
-        super().__init__(parent, title='Passerelle Fusion ↔ KiCad', size=(700,590),
+        super().__init__(parent, title='Passerelle Fusion ↔ KiCad — '+display_version(), size=(700,590),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.target = None
         self.process = None
