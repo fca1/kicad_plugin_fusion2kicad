@@ -1,0 +1,9 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "author": "Passerelle locale Fusion KiCad",
+  "description": {"": "Export BRD, sauvegarde locale et retour de routage contrôlé depuis KiCad."},
+  "version": "1.0.0",
+  "runOnStartup": true,
+  "supportedOS": "windows"
+}
