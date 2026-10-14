@@ -174,7 +174,8 @@ def translate(root):
                 parent.remove(child); count['instance_pads'] += 1
             elif child.tag in ('layerstackup', 'sketches', 'constructions', 'namedviews'):
                 parent.remove(child)
-                warnings.append('Métadonnée '+child.tag+' conservée dans la source, non transférée ; empilement physique à contrôler.')
+                detail = ' ; empilement physique à contrôler.' if child.tag == 'layerstackup' else '.'
+                warnings.append('Métadonnée '+child.tag+' conservée dans la source, non transférée'+detail)
     allowed_tags = set('eagle drawing settings setting drillsymbolsettings drill grid layers layer board description plain libraries library packages package description wire circle rectangle hole text dimension frame polygon vertex pad smd packages3d package3d packageinstances packageinstance attributes attribute variantdefs variantdef classes class clearance designrules param rules rule rulecategory autorouter pass elements element signals signal contactref via errors approved compatibility note mfgpreviewcolors mfgpreviewcolor fusionsync fusionteam groups board_group filters filter'.split())
     for node in root.iter():
         if node.tag not in allowed_tags:

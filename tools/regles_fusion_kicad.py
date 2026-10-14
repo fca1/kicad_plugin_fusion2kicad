@@ -179,6 +179,33 @@ def modern_widths(board, class_names):
     return resolved, inventory
 
 
+def effective_widths(board):
+    """Même résolution par signal pour l'aller et les raccords du retour."""
+    classes = {c.get('number'):c for c in board.findall('./classes/class')}
+    modern, inventory = modern_widths(board,{cid:c.get('name') for cid,c in classes.items()})
+    global_min = mm(board.find('./designrules/param[@name="msWidth"]').get('value'))
+    result = {}
+    for s in board.findall('./signals/signal'):
+        cid = s.get('class','0')
+        if cid not in classes: raise ValueError('Classe inconnue : '+cid)
+        legacy = max(global_min,mm(classes[cid].get('width','0')))
+        rule = modern.get('@net:'+s.get('name'),modern.get(cid))
+        result[s.get('name')] = dict(rule or {'minimum':legacy,'preferred':legacy})
+    return result, inventory
+
+
+def ulp_class_guard(board):
+    """Contrôle des classes que l'ULP peut effectivement lire dans la cible."""
+    classes = board.findall('./classes/class')
+    q = lambda s: json.dumps(s,ensure_ascii=True)
+    result = ['int classCount=0; board(B) { B.classes(C) { classCount++; int known=0;']
+    for c in classes:
+        result.append(f'if (C.number=={int(c.get("number"))}) {{ known=1; if (C.name!={q(c.get("name",""))} || abs(u2mm(C.width)-{mm(c.get("width","0")):.9f})>0.000002) issue="Classe de largeur modifiee : " + C.name; }}')
+    result.extend(['if (!known) issue="Classe inattendue."; } }',
+                   f'if (classCount!={len(classes)}) issue="Nombre de classes different.";'])
+    return result
+
+
 def transfer(brd_path, pcb_path, pro_path, output, name='carte', dru_path=None):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', name):
         raise ValueError('Nom de livrable invalide.')

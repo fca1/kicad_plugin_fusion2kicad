@@ -22,7 +22,7 @@ def version_metadata(version_repo=None):
     revision = int(git('rev-list', '--count', commit))
     # Les changements de documentation ne changent pas le code embarqué.
     dirty = not is_archive and bool(git('status', '--porcelain', '--',
-        'plugin', 'tools', 'fusion_addin', '.gitattributes', 'plugin-version-archive.txt'))
+        'plugin', 'tools', '.gitattributes', 'plugin-version-archive.txt'))
     return dict(revision=revision, commit=commit, dirty=dirty)
 
 
@@ -39,9 +39,6 @@ def build(destination, version_repo=None):
     with zipfile.ZipFile(Path(destination)/'passerelle_fusion.zip','w',zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(package.rglob('*')):
             if path.is_file(): archive.write(path,path.relative_to(destination))
-    # Le compagnon est installé séparément dans les compléments Fusion.
-    shutil.copytree(ROOT/'fusion_addin/PasserelleKiCad', Path(destination)/'PasserelleKiCad',
-                    ignore=shutil.ignore_patterns('__pycache__'))
     return package
 
 

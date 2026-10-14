@@ -24,7 +24,38 @@ def projection(p, a, b):
     return point([a[i]+t*d[i] for i in (0, 1)])
 
 
-def normalize(wires, anchors, unresolved=None):
+def fit_link(candidate, maximum, minimum, allow_covered_neckdown=True):
+    """Chercher la largeur maximale sans changer l'enveloppe du cuivre.
+
+    Le plancher de 1 µm est numérique, pas une règle de fabrication : la
+    capsule entière doit déjà exister dans le cuivre commun source/cible.
+    Une exception sous le minimum reste identifiée et vérifiée séparément.
+    """
+    geometries = proof_geometries(candidate)
+    def fits(width):
+        candidate['width'] = width
+        return contained(candidate, geometries)
+    if fits(maximum):
+        return True
+    floor = min(minimum, .001) if allow_covered_neckdown else minimum
+    if floor <= 0 or not fits(floor):
+        return False
+    lo, hi = floor, maximum
+    for _ in range(20):
+        mid = (lo+hi)/2
+        if fits(mid): lo = mid
+        else: hi = mid
+    # Arrondir vers le bas : le fichier livré ne doit pas élargir la preuve.
+    width = math.floor(lo*1e6)/1e6
+    if not fits(width): return False
+    candidate['covered_neckdown'] = width < minimum-EPS
+    candidate.setdefault('source_width',maximum)
+    candidate['minimum_width'] = minimum
+    candidate['length_mm'] = math.dist(candidate['start'],candidate['end'])
+    return True
+
+
+def normalize(wires, anchors, unresolved=None, allow_covered_neckdown=True):
     anchors = list(anchors)
     minima = {a['net']: a.get('min_width', .1524) for a in anchors}
     # Une extrémité de piste possède elle aussi un disque cuivre garanti.
@@ -45,54 +76,27 @@ def normalize(wires, anchors, unresolved=None):
             if distance <= EPS:
                 cuts[i].add(center)
                 continue
-            # La largeur est conservée : pas de petit fil sous le minimum DRC.
-            width = max(w['width'], a.get('min_width', w['width']))
-            container = None
-            if not covered(distance, width, a['radius'], w['width']/2):
-                # Le centre du via peut être à l'intérieur d'une grosse piste.
-                # Une liaison respectant la classe tient alors dans la capsule
-                # de cette piste, même si elle ne tient pas dans le petit via.
-                width = a.get('min_width', w['width'])
-                if not covered(distance, width, a['radius'], w['width']/2):
-                    if distance + width/2 <= w['width']/2 - EPS:
-                        container = w
-                    else:
-                        # Les vrais rectangles et l'axe entier de la piste
-                        # couvrent des contacts que les deux disques ratent.
-                        if not touches(anchor_shape(a,w['layer']),wire_shape(w)): continue
-                        candidate = dict(net=w['net'], layer=w['layer'], width=width,
-                                         start=list(center), end=list(q), anchor=a,
-                                         endpoint_wire=w, geometry_proof=True)
-                        if not contained(candidate, proof_geometries(candidate)):
-                            # Le projeté le plus proche n'est pas toujours le
-                            # meilleur raccord : une arrivée légèrement plus
-                            # loin sur l'axe peut éviter le bord du cuivre.
-                            # Chaque essai garde la même preuve de containment.
-                            length = math.dist(w['start'],w['end'])
-                            unit = [(w['end'][j]-w['start'][j])/length for j in (0,1)]
-                            alternatives = {projection([q[j]+sign*step*unit[j] for j in (0,1)],
-                                                       w['start'],w['end'])
-                                            for step in (.001,.005,.01,.02,.05,.1,.2,.5)
-                                            for sign in (-1,1)}
-                            accepted = None
-                            for trial in sorted(alternatives,key=lambda p:math.dist(center,p)):
-                                candidate['end'] = list(trial)
-                                if contained(candidate, proof_geometries(candidate)):
-                                    accepted = trial
-                                    break
-                            if accepted is None: continue
-                            q = accepted
-                            distance = math.dist(center,q)
+            if not touches(anchor_shape(a,w['layer']),wire_shape(w)): continue
+            minimum = a.get('min_width',w['width'])
+            candidate = dict(net=w['net'],layer=w['layer'],start=list(center),
+                             end=list(q),anchor=a,endpoint_wire=w,geometry_proof=True,
+                             source_width=w['width'])
+            if not fit_link(candidate,max(w['width'],minimum),minimum,allow_covered_neckdown):
+                length = math.dist(w['start'],w['end'])
+                unit = [(w['end'][j]-w['start'][j])/length for j in (0,1)]
+                alternatives = {projection([q[j]+sign*step*unit[j] for j in (0,1)],w['start'],w['end'])
+                                for step in (.001,.005,.01,.02,.05,.1,.2,.5) for sign in (-1,1)}
+                for trial in sorted(alternatives,key=lambda p:math.dist(center,p)):
+                    candidate['end'] = list(trial)
+                    if fit_link(candidate,max(w['width'],minimum),minimum,allow_covered_neckdown):
+                        q = trial
+                        break
+                else: continue
             key = (a['net'], w['layer'], center, q)
             cuts[i].add(q)
             if key not in seen:
                 seen.add(key)
-                link = dict(net=w['net'], layer=w['layer'], width=width,
-                            start=list(center), end=list(q), anchor=a, endpoint_wire=w)
-                if container: link['container_wire'] = container
-                elif not covered(distance, width, a['radius'], w['width']/2):
-                    link['geometry_proof'] = True
-                links.append(link)
+                links.append(candidate)
     # Deux pastilles/vias de même net peuvent se recouvrir sans centres liés.
     # Chaque demi-capsule doit tenir dans son disque ; c'est plus restrictif
     # qu'une simple intersection visuelle, donc aucun saut dans l'air possible.
@@ -115,7 +119,7 @@ def normalize(wires, anchors, unresolved=None):
                 if distance/2+width/2 > min(a['radius'],b['radius'])-EPS:
                     if not touches(anchor_shape(a,layer),anchor_shape(b,layer)): continue
                     candidate['geometry_proof'] = True
-                    if not contained(candidate, proof_geometries(candidate)): continue
+                    if not fit_link(candidate,width,max(a.get('min_width',width),b.get('min_width',width)),allow_covered_neckdown): continue
                 links.append(candidate)
     # Une intersection d'axes doit être un sommet partagé, même si elle se
     # situe au milieu des deux segments (Fusion ne déduit pas tous les contacts).
@@ -195,6 +199,18 @@ def normalize(wires, anchors, unresolved=None):
                 if not touches(anchor_shape(a,layer),anchor_shape(b,layer)): continue
                 pending.append(dict(net=a['net'],layer=layer,anchor=a,second_anchor=b,
                                     reason='Contact entre pads/vias sans raccord contenu à la largeur minimale'))
+    # Les contacts latéraux n'ont pas forcément de croisement d'axes ou
+    # d'extrémité dans le voisin. Les auditer même sans pad/via impliqué.
+    for i, a in enumerate(wires):
+        for b in wires[:i]:
+            if (a['net'],a['layer']) != (b['net'],b['layer']): continue
+            ra, rb = find(key(a,a['start'])),find(key(b,b['start']))
+            ident = (a['net'],a['layer'],tuple(sorted((ra,rb))))
+            if ra==rb or ident in seen_contacts: continue
+            if not touches(wire_shape(a),wire_shape(b)): continue
+            seen_contacts.add(ident)
+            pending.append(dict(net=a['net'],layer=a['layer'],wire=a,second_wire=b,
+                                reason='Contact entre pistes sans jonction explicite contenue'))
     if unresolved is not None:
         unresolved.extend(pending)
     elif pending:

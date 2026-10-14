@@ -35,6 +35,10 @@ def run(pcbnew, board, brd, destination, rules):
     job = Path(destination).resolve()/('fusion_'+uuid.uuid4().hex[:12])
     inputs, output = job/'sources', job/'resultat'
     inputs.mkdir(parents=True)
+    # Le dialogue conserve ce dossier même si la préparation échoue : les
+    # diagnostics ne doivent pas dépendre de l'existence d'un livrable validé.
+    if hasattr(board,'GetFileName'):
+        run.last_job = job
     _, source_report = prepare_source(brd, inputs)
     snapshot = inputs/'carte.kicad_pcb'
     # PCB_IO_MGR.Save sérialise l'état en mémoire sans SaveBoard (qui peut
@@ -83,8 +87,11 @@ def run(pcbnew, board, brd, destination, rules):
         message = (f"Prêt : {report['segments_kicad']} segments, {report['vias_kicad']} vias, {report['zones_kicad']} zone(s).\n"
                    'Copiez la commande RUN dans le PCB cible Fusion.\n'
                    'Le routage concerné sera remplacé. Vérifiez le remplissage et le DRC.')
-        if warning_text:
-            message += '\n'+warning_text
+        unresolved = len(report.get('unresolved_junctions', []))
+        if unresolved:
+            message += f'\nAttention : {unresolved} contact(s) non résolu(s), laissés inchangés.'
+        if warnings:
+            message += '\nRapports : '+str(output)
     (job/'capture.json').write_text(json.dumps({'carte_ouverte':str(source),
         'kicad':pcbnew.GetBuildVersion(),'snapshot_inclut_modifications_non_enregistrees':True,
         'source_originale_enregistree':False},ensure_ascii=False,indent=2),encoding='utf-8')

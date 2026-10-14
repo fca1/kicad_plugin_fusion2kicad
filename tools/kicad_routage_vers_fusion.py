@@ -322,9 +322,13 @@ def main(argv=None):
         vias.append(item)
     anchors.extend(dict(net=v['net'], at=v['at'], radius=v['diameter']/2,
                         layers=list(layer_map.values()), source='via') for v in vias)
-    class_widths = {c.get('number'):float(c.get('width','0')) for c in b.findall('./classes/class')}
+    try:
+        from .regles_fusion_kicad import effective_widths, ulp_class_guard
+    except ImportError:
+        from regles_fusion_kicad import effective_widths, ulp_class_guard
+    width_rules, width_inventory = effective_widths(b)
     for anchor in anchors:
-        anchor['min_width'] = max(mm(design_rules['msWidth']),class_widths[signals[anchor['net']].get('class','0')])
+        anchor['min_width'] = width_rules[anchor['net']]['minimum']
     unresolved = []
     fusion_wires, junctions = normalize(wires, anchors, unresolved)
     old_wires = []
@@ -367,6 +371,12 @@ def main(argv=None):
     # Une limite de connectivité est signalée, sans empêcher de livrer le
     # cuivre source. Les raccords non prouvés ne sont jamais inventés.
     report['warnings'] = []
+    report['width_rules'] = width_rules
+    report['covered_neckdowns'] = [j for j in junctions if j.get('covered_neckdown')]
+    if report['covered_neckdowns']:
+        report['warnings'].append(f"{len(report['covered_neckdowns'])} raccord(s) sous le minimum entièrement recouverts : cuivre réel conservé ; des erreurs Copper Width restent possibles dans Fusion.")
+    if width_inventory['rules']:
+        report['warnings'].append('Le RUN contrôle les anciennes classes et les formes cuivre. Les règles modernes ne sont pas accessibles par ULP : repréparer le retour si elles changent, puis contrôler le DRC Fusion.')
     if unresolved:
         report['warnings'].append(
             f'{len(unresolved)} contact(s) cuivre sans jonction explicite sûre ; '
@@ -440,6 +450,9 @@ def main(argv=None):
             ulp.append(f'refs[{i}]={q(ref)}; packages[{i}]={q(e.get("package"))}; ex[{i}]={e.get("x")}; ey[{i}]={e.get("y")}; angles[{i}]={fmt(angle)}; mirrors[{i}]={int("M" in rot)};')
         for i, pad in enumerate(pad_report):
             ulp.append(f'padkeys[{i}]={q(pad["component"]+"/"+pad["pad"])}; padnets[{i}]={q(pad["net"])}; px[{i}]={fmt(pad["xy_fusion"][0])}; py[{i}]={fmt(pad["xy_fusion"][1])};')
+        # UL_BOARD ne publie pas les règles modernes. Revalider au moins les
+        # classes accessibles ; ne pas prétendre contrôler toute la règle.
+        ulp.extend(ulp_class_guard(b))
         ulp.extend([
             'if (!board) { dlgMessageBox("Ouvrir le PCB cible (BRD), pas le schema."); exit(1); }',
             '// Fusion V2 : Bottom=304 dans UL_LAYER, cb en CLI, 64 dans VIA.',

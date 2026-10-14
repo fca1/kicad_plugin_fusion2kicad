@@ -5,6 +5,7 @@ de couche, de net, de largeur et de perçage dans le fichier réellement livré.
 Il ne remplace ni la compilation ULP par Fusion ni son DRC.
 """
 import collections
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -16,8 +17,30 @@ except ImportError:
     from kicad_routage_vers_fusion import parse, nodes, field, net
 
 
+def verify_conservation(source, delivered, links):
+    """La normalisation doit conserver les axes source, plus les seuls ponts.
+
+    Comparer les unions par net/couche/largeur permet les découpages et les
+    regroupements colinéaires sans faire confiance à fusion_segments.
+    """
+    from shapely.geometry import LineString
+    from shapely.ops import unary_union
+    def groups(wires):
+        result = collections.defaultdict(list)
+        for w in wires:
+            result[(w['net'],w['layer'],round(w['width'],6))].append(LineString([w['start'],w['end']]))
+        return {k:unary_union(v) for k,v in result.items()}
+    expected, actual = groups(source+links),groups(delivered)
+    assert expected.keys()==actual.keys(), 'Groupes cuivre source perdus ou ajoutés'
+    for k,a in expected.items():
+        b = actual[k]
+        assert a.buffer(.000002).covers(b) and b.buffer(.000002).covers(a), f'Cuivre source perdu ou ajouté : {k}'
+
+
 def check(folder):
     report = json.loads((folder/'rapport_conversion.json').read_text(encoding='utf-8'))
+    for key, path in [('sha256_kicad','source_kicad'),('sha256_brd','source_brd')]:
+        assert hashlib.sha256(Path(report[path]).read_bytes()).hexdigest()==report[key], 'Source modifiée depuis la conversion'
     source = parse(Path(report['source_kicad']).read_text(encoding='utf-8-sig'))
     code = (folder/report.get('ulp_filename','cube_pcb1_pistes_vias.ulp')).read_text(encoding='ascii')
     try:
@@ -48,7 +71,17 @@ def check(folder):
     original_report = collections.Counter(wire_key(inverse.get(w['net'],w['net']), layers[w['layer']], w['width'], coords(*w['start']),coords(*w['end'])) for w in report['segments'])
     assert original_report == expected_wires, 'Source et rapport différents'
     if 'fusion_segments' in report:
+        verify_conservation(report['segments'],report['fusion_segments'],report['junctions'])
         import math
+        try:
+            from .regles_fusion_kicad import effective_widths, ulp_class_guard
+        except ImportError:
+            from regles_fusion_kicad import effective_widths, ulp_class_guard
+        board = ET.parse(report['source_brd']).find('./drawing/board')
+        widths, _ = effective_widths(board)
+        if 'width_rules' in report:
+            assert report['width_rules']==widths, 'Règles de largeur du rapport incohérentes'
+            assert '\n'.join(ulp_class_guard(board)) in code, 'Protection des classes altérée'
         try:
             from .cuivre_jonctions import ulp_pad_guard
         except ImportError:
@@ -57,16 +90,33 @@ def check(folder):
         assert expected_guard in code, 'Protection du cuivre des pads altérée'
         # Les contacts non résolus sont des avertissements. Vérifier toujours
         # les commandes livrées et les raccords effectivement ajoutés.
+        try:
+            from .jonctions_fusion import projection
+        except ImportError:
+            from jonctions_fusion import projection
         for link in report['junctions']:
             a = link['anchor']
             assert link['net'] == a['net'] and link['layer'] in a['layers']
-            assert link['width'] >= a.get('min_width',0)-0.000002, 'Raccord sous la largeur minimale'
+            assert math.dist(link['start'],a['at'])<=0.000002, 'Raccord éloigné du centre'
+            if 'endpoint_wire' in link:
+                w = link['endpoint_wire']
+                assert math.dist(link['end'],projection(link['end'],w['start'],w['end']))<=0.000002, 'Raccord hors axe cible'
+            if a.get('source')=='track_endpoint':
+                assert a['source_wire'] in report['segments']
+                assert a['at'] in (a['source_wire']['start'],a['source_wire']['end'])
+                assert a['radius']==a['source_wire']['width']/2
+            minimum = widths[link['net']]['minimum']
+            assert link['width'] > 0 and math.isfinite(link['width']), 'Largeur invalide'
+            # L'exception utilisateur ne concerne que les capsules déjà
+            # recouvertes. La preuve complète est obligatoire sous le minimum.
+            if link['width'] < minimum-0.000002:
+                assert link.get('covered_neckdown') and link.get('geometry_proof'), 'Raccord sous minimum sans preuve'
+                assert abs(link['minimum_width']-minimum)<0.000002, 'Minimum de raccord incohérent'
             if link.get('geometry_proof'):
                 try:
                     from .cuivre_jonctions import contained, proof_geometries
                 except ImportError:
                     from cuivre_jonctions import contained, proof_geometries
-                assert link['width'] >= a.get('min_width',0)-0.000002
                 if 'endpoint_wire' in link:
                     assert link['endpoint_wire'] in report['segments']
                     assert (link['endpoint_wire']['net'],link['endpoint_wire']['layer']) == (link['net'],link['layer'])

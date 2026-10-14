@@ -7,14 +7,12 @@ import traceback
 if __name__ == '__main__':
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import pcbnew
-    from passerelle_fusion.workflow import prepare_for_krt, apply_to_fusion
+    from passerelle_fusion.workflow import prepare_for_krt
     path = Path(sys.argv[1]).resolve()
     config = json.loads(path.read_text(encoding='utf-8'))
     try:
         if config['operation']=='prepare':
             result = prepare_for_krt(pcbnew, path.parent, config.get('brd',''))
-        elif config['operation']=='apply':
-            result = apply_to_fusion(pcbnew, path.parent, Path(config['snapshot']))
         else:
             raise ValueError('Opération inconnue.')
     except Exception as error:

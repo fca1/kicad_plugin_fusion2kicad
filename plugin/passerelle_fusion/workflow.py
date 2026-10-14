@@ -1,31 +1,20 @@
 """Parcours automatique exécuté hors de l'éditeur, sur des copies uniquement."""
 from pathlib import Path
 import contextlib
-import hashlib
-import importlib.util
 import io
 import json
 import os
 import shutil
 import subprocess
 import sys
-import time
-import uuid
 
-from .bridge_client import request
-from .import_board import find_cli, import_board
+from .import_board import find_cli
 from .service import create_from_brd
-from .core.regles_fusion_kicad import transfer
 from .core.kicad_routage_vers_fusion import main as convert, parse, nodes, field, net
-from .core.verifier_script_routage import check
 
 
 def write_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-
-
-def sha(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def run_process(command, log, timeout=1800):
@@ -121,16 +110,17 @@ def drc(pcbnew, pcb, output):
                 non_connectes=len(report.get('unconnected_items', [])), rapport=str(output))
 
 
-def export_source(folder):
-    result = request('export', {'path':str((folder/'fusion_source.brd').resolve())})
-    write_json(folder/'source_fusion.json', result)
-    print('Fusion : '+result['name'], flush=True)
-    return result
+def validate_source(brd):
+    path = Path(brd)
+    if not path.is_file() or path.suffix.lower() not in ('.brd', '.fbrd'):
+        raise ValueError('Sélectionner un fichier source Fusion .brd ou .fbrd.')
+    return path
 
 
 def prepare_for_krt(pcbnew, job, brd=''):
     # L'étape utilisateur ne lance jamais la CLI : seul le dialogue natif KRT
     # décidera du routage, après chargement de la copie dans son propre éditeur.
+    validate_source(brd)
     find_krt()
     result = prepare_and_route(pcbnew, job, brd, route=False)
     result['open_krt'] = True
@@ -138,19 +128,18 @@ def prepare_for_krt(pcbnew, job, brd=''):
     (folder/'README.txt').write_text(result['message'], encoding='utf-8')
     result['message'] = ('Carte et règles préparées.\n'
                          'Choisissez les paramètres et lancez le routage dans KRT.\n'
-                         'Limites du transfert : voir Détails.')
+                         'Rapports : '+str(folder))
     return result
 
 
 def prepare_and_route(pcbnew, job, brd='', route=False):
-    source = export_source(job) if not brd else None
-    brd = Path(brd) if brd else Path(source['path'])
+    brd = validate_source(brd)
     print('Import BRD et transfert des règles…', flush=True)
     project, message = create_from_brd(pcbnew, brd, job)
     board = project.with_suffix('.kicad_pcb')
     report = json.loads((project.parent/'rapport_regles.json').read_text(encoding='utf-8'))
     metadata = {'brd':str((project.parent.parent/'sources/original.brd').resolve()),
-                'source_input':str(brd.resolve()), 'source_fusion':source}
+                'source_input':str(brd.resolve())}
     brd = Path(metadata['brd'])
     write_json(project.with_suffix('.fusion.json'), metadata)
     if not route:
@@ -185,37 +174,6 @@ def prepare_and_route(pcbnew, job, brd='', route=False):
         message += 'Résultat ouvert pour diagnostic ; application automatique refusée si dimensions non conformes.'
     return dict(ok=True, target=str(routed.with_suffix('.kicad_pro')), message=message,
                 open_board=True, dimensions_valides=valid, drc_avant=baseline, drc_apres=after)
-
-
-def apply_to_fusion(pcbnew, job, snapshot):
-    # Reprendre les règles et l'identité de la cible active maintenant, pas celles
-    # d'un export ancien. L'ULP contrôle encore chaque composant et chaque pastille.
-    source = export_source(job)
-    inputs = job/'controle_source'; inputs.mkdir()
-    import_board(pcbnew, Path(source['path']), inputs)
-    rules = transfer(Path(source['path']), snapshot, inputs/'carte.kicad_pro',
-                     job/'regles_courantes', 'carte_fusion')
-    measured = audit_dimensions(snapshot, rules)
-    write_json(job/'controle_dimensions.json', measured)
-    if not measured['conforme']:
-        raise ValueError('Application refusée : pistes ou vias plus petits que les dimensions Fusion. Voir '+str(job/'controle_dimensions.json'))
-    checked_pcb = job/'regles_courantes/carte_fusion.kicad_pcb'
-    audit = drc(pcbnew, checked_pcb, job/'drc_avant_application.json')
-    if audit['erreurs'] or audit['non_connectes']:
-        raise ValueError(f"Application automatique arrêtée : {audit['erreurs']} erreurs DRC, {audit['non_connectes']} non-connectés. Rapport : {audit['rapport']}")
-    output = job/'retour'
-    with contextlib.redirect_stdout(io.StringIO()):
-        convert([str(snapshot), source['path'], '--output', str(output), '--name', 'carte_fusion', '--prepare-only', '--quiet-prepare'])
-        check(output)
-    conversion = json.loads((output/'rapport_conversion.json').read_text(encoding='utf-8'))
-    if len(conversion['layer_mapping']) != 2:
-        raise ValueError('Application automatique validée pour deux couches uniquement.')
-    print('Application Fusion avec sauvegarde préalable et DRC…', flush=True)
-    result = request('apply', {'folder':str(output), 'identity':source['identity'],
-                     'source_sha256':source['sha256'],
-                     'ulp_sha256':sha(output/'carte_fusion_pistes_vias.ulp')}, timeout=300)
-    return dict(ok=True, target=str(output), open_board=False,
-                message=f"Retour appliqué dans {result['name']}. DRC exécuté : {result['drc_checked']}, {len(result['errors'])} signalements.\nSauvegarde : {result['backup']}\nLe document Fusion reste non enregistré.")
 
 
 def open_board(pcbnew, project, with_krt=False):
